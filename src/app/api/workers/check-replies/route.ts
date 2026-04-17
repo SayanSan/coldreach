@@ -161,7 +161,8 @@ export async function POST() {
           if (existingLead) continue;
 
           // Extract reply body
-          const replyBody = parsed.text || parsed.html?.replace(/<[^>]+>/g, '') || '';
+          const htmlContent = typeof parsed.html === 'string' ? parsed.html.replace(/<[^>]+>/g, '') : '';
+          const replyBody = parsed.text || htmlContent || '';
           const replySubject = typeof parsed.subject === 'string' ? parsed.subject : '';
           const replyMessageId = typeof parsed.messageId === 'string' ? parsed.messageId : undefined;
 
