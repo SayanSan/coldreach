@@ -1,0 +1,330 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider        = "prisma-client-js"
+  previewFeatures = ["driverAdapters"]
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// ─── Auth ────────────────────────────────────────────────────────────
+
+model User {
+  id           String   @id @default(uuid())
+  email        String   @unique
+  passwordHash String   @map("password_hash")
+  name         String
+  createdAt    DateTime @default(now()) @map("created_at")
+
+  @@map("users")
+}
+
+// ─── SMTP ────────────────────────────────────────────────────────────
+
+model SmtpAccount {
+  id                String   @id @default(uuid())
+  name              String
+  email             String
+  host              String
+  port              Int
+  username          String
+  passwordEncrypted String   @map("password_encrypted")
+  useTls            Boolean  @default(true) @map("use_tls")
+  dailyLimit        Int      @default(500) @map("daily_limit")
+  sentToday         Int      @default(0) @map("sent_today")
+  warmUpEnabled     Boolean  @default(false) @map("warm_up_enabled")
+  warmUpDailyLimit  Int      @default(20) @map("warm_up_daily_limit")
+  warmUpIncrement   Int      @default(5) @map("warm_up_increment")
+  warmUpTargetLimit Int      @default(500) @map("warm_up_target_limit")
+  isActive          Boolean  @default(true) @map("is_active")
+  // IMAP settings for reply detection
+  imapHost          String?  @map("imap_host")
+  imapPort          Int?     @default(993) @map("imap_port")
+  lastResetAt       DateTime @default(now()) @map("last_reset_at")
+  createdAt         DateTime @default(now()) @map("created_at")
+  updatedAt         DateTime @updatedAt @map("updated_at")
+
+  campaigns      Campaign[]
+  campaignEmails CampaignEmail[]
+  followUpEmails FollowUpEmail[]
+
+  @@map("smtp_accounts")
+}
+
+// ─── Contacts ────────────────────────────────────────────────────────
+
+model Contact {
+  id             String   @id @default(uuid())
+  email          String   @unique
+  firstName      String?  @map("first_name")
+  lastName       String?  @map("last_name")
+  company        String?
+  title          String?
+  customFields   Json?    @map("custom_fields")
+  isUnsubscribed Boolean  @default(false) @map("is_unsubscribed")
+  bounceCount    Int      @default(0) @map("bounce_count")
+  createdAt      DateTime @default(now()) @map("created_at")
+  updatedAt      DateTime @updatedAt @map("updated_at")
+
+  listMemberships ContactListMember[]
+  campaignEmails  CampaignEmail[]
+  followUpEmails  FollowUpEmail[]
+  leads           Lead[]
+  unsubscribeLogs UnsubscribeLog[]
+
+  @@map("contacts")
+}
+
+model ContactList {
+  id          String   @id @default(uuid())
+  name        String
+  description String?
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  members   ContactListMember[]
+  campaigns Campaign[]
+
+  @@map("contact_lists")
+}
+
+model ContactListMember {
+  contactId String   @map("contact_id")
+  listId    String   @map("list_id")
+  addedAt   DateTime @default(now()) @map("added_at")
+
+  contact Contact     @relation(fields: [contactId], references: [id], onDelete: Cascade)
+  list    ContactList @relation(fields: [listId], references: [id], onDelete: Cascade)
+
+  @@id([contactId, listId])
+  @@map("contact_list_members")
+}
+
+// ─── Campaigns ───────────────────────────────────────────────────────
+
+enum CampaignStatus {
+  DRAFT
+  SCHEDULED
+  SENDING
+  PAUSED
+  COMPLETED
+  CANCELLED
+}
+
+enum EmailStatus {
+  QUEUED
+  SENDING
+  SENT
+  DELIVERED
+  OPENED
+  REPLIED
+  BOUNCED
+  FAILED
+}
+
+enum FollowUpCondition {
+  NO_REPLY
+  NO_OPEN
+}
+
+model Campaign {
+  id              String         @id @default(uuid())
+  name            String
+  subject         String
+  bodyHtml        String?        @map("body_html")
+  bodyText        String?        @map("body_text")
+  fromName        String?        @map("from_name")
+  smtpAccountId   String         @map("smtp_account_id")
+  contactListId   String         @map("contact_list_id")
+  status          CampaignStatus @default(DRAFT)
+  sendRatePerHour Int            @default(50) @map("send_rate_per_hour")
+  scheduledAt     DateTime?      @map("scheduled_at")
+  startedAt       DateTime?      @map("started_at")
+  completedAt     DateTime?      @map("completed_at")
+  createdAt       DateTime       @default(now()) @map("created_at")
+  updatedAt       DateTime       @updatedAt @map("updated_at")
+
+  smtpAccount    SmtpAccount     @relation(fields: [smtpAccountId], references: [id])
+  contactList    ContactList     @relation(fields: [contactListId], references: [id])
+  campaignEmails CampaignEmail[]
+  followUpSteps  FollowUpStep[]
+
+  @@index([status])
+  @@map("campaigns")
+}
+
+model CampaignEmail {
+  id                 String      @id @default(uuid())
+  campaignId         String      @map("campaign_id")
+  contactId          String      @map("contact_id")
+  smtpAccountId      String      @map("smtp_account_id")
+  status             EmailStatus @default(QUEUED)
+  messageId          String?     @map("message_id")
+  personalizedSubject String?    @map("personalized_subject")
+  personalizedBody   String?     @map("personalized_body")
+  sentAt             DateTime?   @map("sent_at")
+  openedAt           DateTime?   @map("opened_at")
+  repliedAt          DateTime?   @map("replied_at")
+  bounceReason       String?     @map("bounce_reason")
+  errorMessage       String?     @map("error_message")
+  createdAt          DateTime    @default(now()) @map("created_at")
+
+  campaign    Campaign       @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  contact     Contact        @relation(fields: [contactId], references: [id])
+  smtpAccount SmtpAccount    @relation(fields: [smtpAccountId], references: [id])
+  followUps   FollowUpEmail[]
+  leads       Lead[]
+
+  @@index([campaignId])
+  @@index([messageId])
+  @@index([status])
+  @@index([contactId])
+  @@map("campaign_emails")
+}
+
+// ─── Follow-ups ──────────────────────────────────────────────────────
+
+model FollowUpStep {
+  id         String            @id @default(uuid())
+  campaignId String            @map("campaign_id")
+  stepNumber Int               @map("step_number")
+  delayDays  Int               @default(3) @map("delay_days")
+  delayHours Int               @default(0) @map("delay_hours")
+  subject    String
+  bodyHtml   String?           @map("body_html")
+  bodyText   String?           @map("body_text")
+  condition  FollowUpCondition @default(NO_REPLY)
+  isActive   Boolean           @default(true) @map("is_active")
+  createdAt  DateTime          @default(now()) @map("created_at")
+
+  campaign       Campaign        @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  followUpEmails FollowUpEmail[]
+
+  @@unique([campaignId, stepNumber])
+  @@map("follow_up_steps")
+}
+
+model FollowUpEmail {
+  id              String      @id @default(uuid())
+  stepId          String      @map("step_id")
+  originalEmailId String      @map("original_email_id")
+  contactId       String      @map("contact_id")
+  smtpAccountId   String      @map("smtp_account_id")
+  status          EmailStatus @default(QUEUED)
+  messageId       String?     @map("message_id")
+  scheduledFor    DateTime?   @map("scheduled_for")
+  sentAt          DateTime?   @map("sent_at")
+  openedAt        DateTime?   @map("opened_at")
+  repliedAt       DateTime?   @map("replied_at")
+  createdAt       DateTime    @default(now()) @map("created_at")
+
+  step          FollowUpStep  @relation(fields: [stepId], references: [id], onDelete: Cascade)
+  originalEmail CampaignEmail @relation(fields: [originalEmailId], references: [id], onDelete: Cascade)
+  contact       Contact       @relation(fields: [contactId], references: [id])
+  smtpAccount   SmtpAccount   @relation(fields: [smtpAccountId], references: [id])
+
+  @@index([stepId])
+  @@index([originalEmailId])
+  @@index([status])
+  @@index([scheduledFor])
+  @@map("follow_up_emails")
+}
+
+// ─── Leads ───────────────────────────────────────────────────────────
+
+enum Sentiment {
+  POSITIVE
+  NEUTRAL
+  NEGATIVE
+  OUT_OF_OFFICE
+  UNSUBSCRIBE
+}
+
+enum LeadScore {
+  HOT
+  WARM
+  COLD
+}
+
+enum LeadStage {
+  NEW
+  CONTACTED
+  REPLIED
+  INTERESTED
+  QUALIFIED
+  CONVERTED
+  LOST
+}
+
+model Lead {
+  id              String    @id @default(uuid())
+  contactId       String    @map("contact_id")
+  campaignEmailId String    @map("campaign_email_id")
+  replyMessageId  String?   @map("reply_message_id")
+  replyBody       String?   @map("reply_body")
+  sentiment       Sentiment @default(NEUTRAL)
+  leadScore       LeadScore @default(COLD)
+  aiSummary       String?   @map("ai_summary")
+  stage           LeadStage @default(NEW)
+  notes           String?
+  createdAt       DateTime  @default(now()) @map("created_at")
+  updatedAt       DateTime  @updatedAt @map("updated_at")
+
+  contact       Contact       @relation(fields: [contactId], references: [id])
+  campaignEmail CampaignEmail @relation(fields: [campaignEmailId], references: [id])
+
+  @@index([contactId])
+  @@index([stage])
+  @@index([sentiment])
+  @@index([leadScore])
+  @@map("leads")
+}
+
+// ─── Deliverability ──────────────────────────────────────────────────
+
+enum DnsStatus {
+  PASS
+  FAIL
+  MISSING
+  UNKNOWN
+}
+
+model DomainHealth {
+  id            String    @id @default(uuid())
+  domain        String    @unique
+  spfStatus     DnsStatus @default(UNKNOWN) @map("spf_status")
+  spfRecord     String?   @map("spf_record")
+  dkimStatus    DnsStatus @default(UNKNOWN) @map("dkim_status")
+  dmarcStatus   DnsStatus @default(UNKNOWN) @map("dmarc_status")
+  dmarcRecord   String?   @map("dmarc_record")
+  fullReport    Json?     @map("full_report")
+  lastCheckedAt DateTime? @map("last_checked_at")
+
+  @@map("domain_health")
+}
+
+// ─── App Settings ────────────────────────────────────────────────────
+
+model AppSettings {
+  key       String   @id
+  value     String
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@map("app_settings")
+}
+
+// ─── Unsubscribe ─────────────────────────────────────────────────────
+
+model UnsubscribeLog {
+  id              String   @id @default(uuid())
+  contactId       String   @map("contact_id")
+  campaignEmailId String?  @map("campaign_email_id")
+  reason          String?
+  createdAt       DateTime @default(now()) @map("created_at")
+
+  contact Contact @relation(fields: [contactId], references: [id])
+
+  @@map("unsubscribe_logs")
+}
