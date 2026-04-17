@@ -6,7 +6,6 @@ import { PrismaPg } from '@prisma/adapter-pg';
 
 // Required for serverless environments
 if (typeof globalThis.WebSocket === 'undefined') {
-  // Only import ws in Node.js environments (not edge)
   try {
     // eslint-disable-next-line @typescript-eslint/no-require-imports
     const ws = require('ws');
@@ -34,13 +33,21 @@ const createPrismaClient = () => {
   return new PrismaClient({ adapter: pgAdapter } as any);
 };
 
-// Singleton pattern for Prisma Client
+// ── Lazy singleton ─────────────────────────────────────────────────────────────
+// Client is NOT created at import time — only on first use.
+// This prevents Vercel build failures when DATABASE_URL is not set during build.
+
 const globalForPrisma = globalThis as unknown as {
-  prisma: ReturnType<typeof createPrismaClient> | undefined;
+  prisma: PrismaClient | undefined;
 };
 
-export const prisma = globalForPrisma.prisma ?? createPrismaClient();
-
-if (process.env.NODE_ENV !== 'production') {
-  globalForPrisma.prisma = prisma;
-}
+export const prisma = new Proxy({} as PrismaClient, {
+  get(_target, prop) {
+    if (!globalForPrisma.prisma) {
+      globalForPrisma.prisma = createPrismaClient();
+    }
+    const client = globalForPrisma.prisma;
+    const value = (client as any)[prop];
+    return typeof value === 'function' ? value.bind(client) : value;
+  },
+});
